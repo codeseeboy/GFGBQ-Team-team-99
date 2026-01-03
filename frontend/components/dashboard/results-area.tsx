@@ -13,6 +13,33 @@ export function ResultsArea({
   data: any
   originalContent: string
 }) {
+  // Calculate claim stats
+  const verifiedCount = data?.claims?.filter((c: any) => c.status === "verified").length || 0
+  const uncertainCount = data?.claims?.filter((c: any) => c.status === "uncertain").length || 0
+  const hallucinatedCount = data?.claims?.filter((c: any) => c.status === "hallucinated").length || 0
+  const totalClaims = data?.claims?.length || 0
+
+  // Determine confidence display based on score and hallucination count
+  const getConfidenceInfo = (score: number) => {
+    const hasHallucinations = hallucinatedCount > 0
+    const hasUncertain = uncertainCount > 0
+    
+    if (hasHallucinations) {
+      return { label: "Review Required", icon: AlertCircle, color: "text-red-500", message: `${hallucinatedCount} claim(s) contradicted by sources. Manual review recommended.` }
+    }
+    if (score >= 70) {
+      const uncertainMsg = hasUncertain ? ` ${uncertainCount} claim(s) marked uncertain due to conservative thresholds.` : ""
+      return { label: "High Confidence", icon: CheckCircle2, color: "text-green-500", message: `No hallucinations detected.${uncertainMsg}` }
+    }
+    if (score >= 50) {
+      return { label: "Moderate Confidence", icon: AlertCircle, color: "text-yellow-500", message: "Most claims verified. Some claims marked uncertain due to limited direct evidence." }
+    }
+    return { label: "Review Recommended", icon: AlertCircle, color: "text-orange-500", message: "Many claims could not be directly verified. Consider manual fact-checking." }
+  }
+
+  const confidenceInfo = data ? getConfidenceInfo(data.score) : getConfidenceInfo(0)
+  const ConfidenceIcon = confidenceInfo.icon
+
   if (analyzing) {
     return (
       <div className="space-y-6 pt-6">
@@ -59,7 +86,7 @@ export function ResultsArea({
                 strokeWidth="10"
                 strokeDasharray="465"
                 strokeDashoffset={465 - (465 * data.score) / 100}
-                className="text-primary glow-primary"
+                className={hallucinatedCount === 0 ? "text-green-500" : hallucinatedCount <= 2 ? "text-yellow-500" : "text-red-500"}
                 strokeLinecap="round"
               />
             </svg>
@@ -70,11 +97,11 @@ export function ResultsArea({
               </span>
             </div>
           </div>
-          <h3 className="font-black text-primary mb-2 flex items-center gap-2 text-lg uppercase tracking-tight">
-            Moderate Confidence <AlertCircle className="w-5 h-5" />
+          <h3 className={`font-black mb-2 flex items-center gap-2 text-lg uppercase tracking-tight ${confidenceInfo.color}`}>
+            {confidenceInfo.label} <ConfidenceIcon className="w-5 h-5" />
           </h3>
           <p className="text-xs text-muted-foreground leading-relaxed px-4">
-            Critical hallucination detected in core biographical claims. Verification recommended.
+            {confidenceInfo.message}
           </p>
         </div>
 
@@ -96,17 +123,19 @@ export function ResultsArea({
       </div>
 
       {/* Verified Output */}
-      <div className="glass p-10 rounded-[3rem] border-primary/30 relative overflow-hidden group">
+      <div className={`glass p-10 rounded-[3rem] relative overflow-hidden group ${hallucinatedCount === 0 ? "border-green-500/30" : "border-red-500/30"}`}>
         <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-          <ShieldCheck className="w-32 h-32 text-primary" />
+          <ShieldCheck className={`w-32 h-32 ${hallucinatedCount === 0 ? "text-green-500" : "text-red-500"}`} />
         </div>
         <div className="relative z-10">
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-primary rounded-lg">
+              <div className={`p-2 rounded-lg ${hallucinatedCount === 0 ? "bg-green-500" : "bg-red-500"}`}>
                 <ShieldCheck className="w-6 h-6 text-white" />
               </div>
-              <h3 className="text-2xl font-bold tracking-tight">Verified Integrity Output</h3>
+              <h3 className="text-2xl font-bold tracking-tight">
+                {hallucinatedCount === 0 ? "Verification Complete" : "Issues Detected"}
+              </h3>
             </div>
             <Button
               variant="outline"
@@ -120,8 +149,19 @@ export function ResultsArea({
             <p className="text-xl font-medium leading-relaxed text-white/90 italic">"{originalContent}"</p>
             <div className="h-px bg-white/10 my-8" />
             <p className="text-lg leading-relaxed text-muted-foreground">
-              The engine has identified significant drift in the original text. The corrected and verified version is
-              available in the <span className="text-primary font-bold">Reports</span> section for professional use.
+              {hallucinatedCount === 0 ? (
+                <>
+                  All {totalClaims} claims were evaluated against trusted sources. <span className="text-green-500 font-bold">No hallucinations detected.</span>
+                  {uncertainCount > 0 && (
+                    <> {uncertainCount} claim{uncertainCount !== 1 ? 's are' : ' is'} marked as uncertain due to conservative verification thresholds.</>
+                  )}
+                </>
+              ) : (
+                <>
+                  {hallucinatedCount} claim{hallucinatedCount !== 1 ? 's were' : ' was'} found to <span className="text-red-500 font-bold">contradict verified sources</span>. 
+                  Manual review recommended before publishing.
+                </>
+              )}
             </p>
           </div>
         </div>
