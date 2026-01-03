@@ -1,10 +1,19 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
+import OpenAI from "openai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const openrouter = new OpenAI({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
+  defaultHeaders: {
+    "HTTP-Referer": "http://localhost:3000",
+    "X-Title": "TrustLayer AI Verification",
+  },
+});
 
 export const extractClaims = async (text: string): Promise<string[]> => {
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
   const prompt = `
 Extract factual claims only from the text below.
 Rules:
@@ -17,15 +26,48 @@ Text:
 ${text}
 `;
 
+  // Try Gemini first
   try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContent(prompt);
     const output = result.response.text();
-
-    // Try parsing as JSON
     const cleaned = output.replace(/```json|```/g, "").trim();
+    console.log("[ExtractClaims-Gemini] Successfully extracted claims");
     return JSON.parse(cleaned);
-  } catch (err) {
-    console.warn("Gemini parse failed, using fallback splitter", err);
+  } catch (geminiErr) {
+    console.log("[ExtractClaims] Gemini failed, trying Groq...");
+  }
+
+  // Try Groq as fallback
+  try {
+    const response = await groq.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.3,
+      max_tokens: 1000
+    });
+    const output = response.choices[0]?.message?.content || "[]";
+    const cleaned = output.replace(/```json|```/g, "").trim();
+    console.log("[ExtractClaims-Groq] Successfully extracted claims");
+    return JSON.parse(cleaned);
+  } catch (groqErr) {
+    console.log("[ExtractClaims] Groq failed, trying OpenRouter...");
+  }
+
+  // Try OpenRouter as third fallback
+  try {
+    const response = await openrouter.chat.completions.create({
+      model: "meta-llama/llama-3.3-70b-instruct",
+      temperature: 0.3,
+      max_tokens: 1000,
+      messages: [{ role: "user", content: prompt }]
+    });
+    const output = response.choices[0]?.message?.content || "[]";
+    const cleaned = output.replace(/```json|```/g, "").trim();
+    console.log("[ExtractClaims-OpenRouter] Successfully extracted claims");
+    return JSON.parse(cleaned);
+  } catch (openrouterErr) {
+    console.warn("[ExtractClaims] All AI providers failed, using fallback splitter");
     // Fallback: simple sentence split
     return text
       .split(".")

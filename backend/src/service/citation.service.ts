@@ -1,7 +1,18 @@
 import axios from "axios";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
+import OpenAI from "openai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const openrouter = new OpenAI({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: "https://openrouter.ai/api/v1",
+  defaultHeaders: {
+    "HTTP-Referer": "http://localhost:3000",
+    "X-Title": "TrustLayer AI Verification",
+  },
+});
 const SERP_API_KEY = process.env.SERP_API_KEY;
 
 interface VerificationResult {
@@ -34,13 +45,10 @@ interface LLMVerdict {
 
 /**
  * Extract main entities and intent from a claim using LLM
- * 100% DYNAMIC - no hardcoded patterns
+ * Tries Gemini first, then Groq as fallback
  */
 async function extractClaimAnalysis(claim: string): Promise<ClaimAnalysis> {
-  try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-    
-    const prompt = `You are an entity extraction engine for fact-checking. Analyze this claim and extract key information.
+  const prompt = `You are an entity extraction engine for fact-checking. Analyze this claim and extract key information.
 
 CLAIM: "${claim}"
 
@@ -65,14 +73,48 @@ IMPORTANT:
 
 JSON only, no markdown:`;
 
+  // Try Gemini first
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContent(prompt);
     const output = result.response.text().replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(output);
-    
-    console.log(`[EntityExtract] Claim: "${claim.slice(0, 50)}..." → Entities: ${parsed.entities.join(", ")}`);
+    console.log(`[EntityExtract-Gemini] Claim: "${claim.slice(0, 50)}..." → Entities: ${parsed.entities.join(", ")}`);
     return parsed;
-  } catch (err) {
-    console.log(`[EntityExtract] LLM failed, using fallback`);
+  } catch (geminiErr) {
+    console.log(`[EntityExtract] Gemini failed, trying Groq...`);
+  }
+
+  // Try Groq as fallback
+  try {
+    const response = await groq.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.3,
+      max_tokens: 500
+    });
+    const output = response.choices[0]?.message?.content?.replace(/```json|```/g, "").trim() || "{}";
+    const parsed = JSON.parse(output);
+    console.log(`[EntityExtract-Groq] Claim: "${claim.slice(0, 50)}..." → Entities: ${parsed.entities.join(", ")}`);
+    return parsed;
+  } catch (groqErr) {
+    console.log(`[EntityExtract] Groq failed, trying OpenRouter...`);
+  }
+
+  // Try OpenRouter as third fallback
+  try {
+    const response = await openrouter.chat.completions.create({
+      model: "meta-llama/llama-3.3-70b-instruct",
+      temperature: 0.3,
+      max_tokens: 500,
+      messages: [{ role: "user", content: prompt }]
+    });
+    const output = response.choices[0]?.message?.content?.replace(/```json|```/g, "").trim() || "{}";
+    const parsed = JSON.parse(output);
+    console.log(`[EntityExtract-OpenRouter] Claim: "${claim.slice(0, 50)}..." → Entities: ${parsed.entities.join(", ")}`);
+    return parsed;
+  } catch (openrouterErr) {
+    console.log(`[EntityExtract] OpenRouter also failed, using fallback`);
     return extractClaimAnalysisFallback(claim);
   }
 }
@@ -234,7 +276,7 @@ async function searchWeb(query: string): Promise<Array<{ title: string; snippet:
 
 /**
  * LLM-BASED VERDICT - The AI reasons from sources dynamically
- * THIS IS THE KEY: No hardcoded rules, LLM decides based on evidence
+ * Tries Gemini first, then Groq as fallback
  */
 async function getLLMVerdict(
   claim: string,
@@ -242,18 +284,15 @@ async function getLLMVerdict(
   searchSnippets: string[],
   claimAnalysis: ClaimAnalysis
 ): Promise<LLMVerdict> {
-  try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-    
-    const wikiContext = wikipediaSummary 
-      ? `WIKIPEDIA EVIDENCE:\n"${wikipediaSummary.slice(0, 2500)}"`
-      : "WIKIPEDIA: No relevant article found.";
-    
-    const searchContext = searchSnippets.length > 0
-      ? `WEB SEARCH EVIDENCE:\n${searchSnippets.slice(0, 3).map((s, i) => `${i + 1}. ${s}`).join("\n\n")}`
-      : "WEB SEARCH: No results available.";
+  const wikiContext = wikipediaSummary 
+    ? `WIKIPEDIA EVIDENCE:\n"${wikipediaSummary.slice(0, 2500)}"`
+    : "WIKIPEDIA: No relevant article found.";
+  
+  const searchContext = searchSnippets.length > 0
+    ? `WEB SEARCH EVIDENCE:\n${searchSnippets.slice(0, 3).map((s, i) => `${i + 1}. ${s}`).join("\n\n")}`
+    : "WEB SEARCH: No results available.";
 
-    const prompt = `You are a factual verification engine. Your job is to determine if a claim is TRUE, PARTIALLY TRUE, or FALSE based on the provided evidence.
+  const prompt = `You are a factual verification engine. Your job is to determine if a claim is TRUE, PARTIALLY TRUE, or FALSE based on the provided evidence.
 
 CLAIM TO VERIFY:
 "${claim}"
@@ -302,285 +341,67 @@ Return ONLY a JSON object:
 
 JSON only, no markdown:`;
 
+  // Try Gemini first
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContent(prompt);
     const rawOutput = result.response.text();
-    console.log(`[LLMVerdict] Raw response: ${rawOutput.slice(0, 200)}...`);
+    console.log(`[LLMVerdict-Gemini] Raw response: ${rawOutput.slice(0, 200)}...`);
     
     const output = rawOutput.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(output);
     
-    console.log(`[LLMVerdict] Result: ${parsed.status} (${parsed.confidence}%) - ${parsed.reason.slice(0, 100)}...`);
+    console.log(`[LLMVerdict-Gemini] Result: ${parsed.status} (${parsed.confidence}%) - ${parsed.reason.slice(0, 100)}...`);
     return parsed;
-  } catch (err: any) {
-    console.log(`[LLMVerdict] LLM reasoning failed: ${err.message}`);
-    
-    // Fallback: Use keyword-based heuristic when LLM fails
-    return keywordFallbackVerdict(claim, wikipediaSummary || "", searchSnippets);
+  } catch (geminiErr: any) {
+    console.log(`[LLMVerdict] Gemini failed: ${geminiErr.message?.slice(0, 100)}, trying Groq...`);
   }
-}
 
-/**
- * Fallback verdict when LLM is unavailable
- * SMART FALLBACK: Detects support AND contradiction dynamically from evidence
- * No hardcoded facts - uses pattern matching on claim vs evidence
- */
-function keywordFallbackVerdict(
-  claim: string,
-  wikiContent: string,
-  searchSnippets: string[]
-): LLMVerdict {
-  const claimLower = claim.toLowerCase();
-  const allEvidence = (wikiContent + " " + searchSnippets.join(" ")).toLowerCase();
-  
-  console.log(`[FallbackVerdict] Analyzing claim: "${claim.slice(0, 60)}..."`);
-  
-  if (!allEvidence || allEvidence.length < 50) {
-    return {
-      status: "partially_verified",
-      confidence: 40,
-      reason: "Insufficient evidence available for verification."
-    };
-  }
-  
-  // ========== STEP 1: EXTRACT CLAIM STRUCTURE ==========
-  // Parse what the claim is asserting (who/what + action + attribute)
-  
-  const stopwords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'that', 'this', 'with', 'from', 'for', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'by', 'as', 'according', 'stated', 'described', 'published', 'concluded', 'officially']);
-  
-  const claimWords = claimLower
-    .split(/\s+/)
-    .map(w => w.replace(/[^a-z0-9]/g, ''))
-    .filter(w => w.length > 3 && !stopwords.has(w));
-  
-  // ========== STEP 2: CHECK FOR CONTRADICTION PATTERNS ==========
-  // These are DYNAMIC patterns - not hardcoded facts
-  
-  console.log(`[FallbackVerdict] Checking for contradictions...`);
-  
-  // Pattern A: Nobel Prize / Award - claim says "for X" but evidence says "for Y"
-  // This catches: "won Nobel for relativity" vs evidence "for photoelectric effect"
-  const awardPatterns = [
-    /(?:nobel|prize|award).*?for\s+(?:his\s+)?(?:the\s+)?(?:theory\s+of\s+)?(?:developing\s+)?([a-z\s]+?)(?:\.|,|which|and|that|$)/i,
-    /(?:for|awarded\s+for|won\s+for)\s+(?:his\s+)?(?:the\s+)?(?:theory\s+of\s+)?(?:developing\s+)?([a-z\s]+?)(?:nobel|prize|award)/i
-  ];
-  
-  let claimAwardReason: string | null = null;
-  for (const pattern of awardPatterns) {
-    const match = claimLower.match(pattern);
-    if (match && match[1] && match[1].trim().length > 3) {
-      claimAwardReason = match[1].trim();
-      break;
-    }
-  }
-  
-  if (claimAwardReason) {
-    console.log(`[FallbackVerdict] Claim award reason: "${claimAwardReason}"`);
-    
-    // Check for evidence mentioning a DIFFERENT reason
-    // Look for "especially for", "for his discovery of", "awarded for"
-    const evidenceAwardPatterns = [
-      /(?:especially\s+for|awarded\s+for|prize\s+for|for\s+his\s+(?:discovery\s+of\s+)?(?:the\s+)?(?:law\s+of\s+)?)\s*([a-z\s]+?)(?:\.|,|which|and|in\s+\d|$)/gi
-    ];
-    
-    for (const pattern of evidenceAwardPatterns) {
-      let match;
-      while ((match = pattern.exec(allEvidence)) !== null) {
-        const evidenceReason = match[1].trim();
-        if (evidenceReason.length > 3) {
-          console.log(`[FallbackVerdict] Evidence award reason: "${evidenceReason}"`);
-          
-          // Check if claim reason and evidence reason are DIFFERENT topics
-          const claimHasRelativity = claimAwardReason.includes('relativity') || claimAwardReason.includes('relative');
-          const evidenceHasPhotoelectric = evidenceReason.includes('photoelectric') || allEvidence.includes('photoelectric');
-          
-          const claimHasPhotoelectric = claimAwardReason.includes('photoelectric');
-          const evidenceHasRelativity = evidenceReason.includes('relativity');
-          
-          // Cross-check: if claim says relativity but evidence says photoelectric → CONTRADICTION
-          if (claimHasRelativity && evidenceHasPhotoelectric && !claimHasPhotoelectric) {
-            console.log(`[FallbackVerdict] REASON CONTRADICTION: Claim says "relativity" but evidence says "photoelectric effect"`);
-            return {
-              status: "hallucinated",
-              confidence: 85,
-              reason: `Claim states award was for relativity, but evidence indicates it was for the photoelectric effect.`
-            };
-          }
-          
-          // Generic reason mismatch check
-          const claimReasonWords = new Set(claimAwardReason.split(/\s+/).filter(w => w.length > 4));
-          const evidenceReasonWords = new Set(evidenceReason.split(/\s+/).filter(w => w.length > 4));
-          
-          let overlap = 0;
-          for (const word of claimReasonWords) {
-            if (evidenceReasonWords.has(word) || evidenceReason.includes(word)) overlap++;
-          }
-          
-          const overlapRatio = claimReasonWords.size > 0 ? overlap / claimReasonWords.size : 0;
-          
-          if (overlapRatio < 0.2 && claimReasonWords.size > 0 && evidenceReasonWords.size > 0) {
-            console.log(`[FallbackVerdict] REASON MISMATCH: overlap=${overlapRatio.toFixed(2)}`);
-            return {
-              status: "hallucinated",
-              confidence: 75,
-              reason: `Claim states "${claimAwardReason}" but evidence indicates "${evidenceReason}" instead.`
-            };
-          }
-        }
-      }
-    }
-  }
-  
-  // Pattern B: Claim says location A but evidence says location B
-  const locationWords = ['london', 'paris', 'berlin', 'tokyo', 'new york', 'washington', 'moscow', 'beijing', 'rome', 'madrid'];
-  const claimLocations = locationWords.filter(loc => claimLower.includes(loc));
-  const evidenceLocations = locationWords.filter(loc => allEvidence.includes(loc));
-  
-  if (claimLocations.length > 0 && evidenceLocations.length > 0) {
-    console.log(`[FallbackVerdict] Claim locations: ${claimLocations.join(", ")}, Evidence locations: ${evidenceLocations.join(", ")}`);
-    
-    // Check if claim asserts a location that evidence contradicts
-    for (const claimLoc of claimLocations) {
-      // Check if claim says "built in X" or "constructed in X" or "first in X"
-      const claimSaysBuiltIn = new RegExp(`(?:built|constructed|located|first|originally|transported)\\s+(?:in|at|to)\\s+${claimLoc}`, 'i').test(claimLower);
-      
-      if (claimSaysBuiltIn) {
-        for (const evidenceLoc of evidenceLocations) {
-          if (evidenceLoc !== claimLoc) {
-            // Check if evidence says the TRUE location
-            const evidenceSaysBuiltIn = allEvidence.includes(evidenceLoc) && 
-              (allEvidence.includes('built') || allEvidence.includes('constructed') || 
-               allEvidence.includes('erected') || allEvidence.includes('designed') ||
-               allEvidence.includes('located in ' + evidenceLoc) || allEvidence.includes('in ' + evidenceLoc));
-            
-            if (evidenceSaysBuiltIn) {
-              console.log(`[FallbackVerdict] LOCATION CONTRADICTION: Claim says "${claimLoc}" but evidence says "${evidenceLoc}"`);
-              return {
-                status: "hallucinated",
-                confidence: 85,
-                reason: `Claim states location "${claimLoc}" but evidence indicates "${evidenceLoc}" instead.`
-              };
-            }
-          }
-        }
-      }
-    }
-  }
-  
-  // Pattern C: Evidence explicitly debunks the claim topic
-  const debunkPhrases = ['myth', 'false', 'hoax', 'debunked', 'no evidence', 'not true', 'misconception', 'incorrect', 'untrue', 'misinformation'];
-  const hasDebunkPhrase = debunkPhrases.some(phrase => allEvidence.includes(phrase));
-  
-  if (hasDebunkPhrase) {
-    // Check if the debunk is about the claim's main topic
-    const mainTopicWords = claimWords.slice(0, 5); // First 5 content words
-    const topicNearDebunk = mainTopicWords.filter(word => {
-      // Check if topic word appears within 100 chars of a debunk phrase
-      for (const phrase of debunkPhrases) {
-        const phraseIdx = allEvidence.indexOf(phrase);
-        if (phraseIdx >= 0) {
-          const nearbyText = allEvidence.slice(Math.max(0, phraseIdx - 100), phraseIdx + 100);
-          if (nearbyText.includes(word)) return true;
-        }
-      }
-      return false;
+  // Try Groq as fallback
+  try {
+    const response = await groq.chat.completions.create({
+      messages: [{ role: "user", content: prompt }],
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.3,
+      max_tokens: 1000
     });
+    const rawOutput = response.choices[0]?.message?.content || "{}";
+    console.log(`[LLMVerdict-Groq] Raw response: ${rawOutput.slice(0, 200)}...`);
     
-    if (topicNearDebunk.length >= 2) {
-      console.log(`[FallbackVerdict] DEBUNK DETECTED: Evidence contains debunk phrases near claim topic`);
-      return {
-        status: "hallucinated",
-        confidence: 75,
-        reason: `Evidence indicates this claim may be false or a myth.`
-      };
-    }
-  }
-  
-  // Pattern D: Claim makes extreme assertion ("all", "every", "always", "surpassed")
-  const extremeWords = ['all cognitive', 'every task', 'always', 'completely', 'surpassed human', 'surpassed all', 'all domains', 'every domain'];
-  const hasExtremeAssertion = extremeWords.some(phrase => claimLower.includes(phrase));
-  
-  if (hasExtremeAssertion) {
-    // Check if evidence supports such extreme claims
-    const supportPhrases = ['confirmed', 'proven', 'demonstrated', 'established', 'evidence shows', 'research confirms'];
-    const hasStrongSupport = supportPhrases.some(phrase => allEvidence.includes(phrase));
+    const output = rawOutput.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(output);
     
-    if (!hasStrongSupport) {
-      // Check for limiting language in evidence
-      const limitingPhrases = ['however', 'but', 'limitations', 'challenges', 'not yet', 'still cannot', 'does not', 'do not'];
-      const hasLimitations = limitingPhrases.some(phrase => allEvidence.includes(phrase));
-      
-      if (hasLimitations) {
-        console.log(`[FallbackVerdict] EXTREME CLAIM without support: Evidence shows limitations`);
-        return {
-          status: "hallucinated",
-          confidence: 70,
-          reason: `Claim makes extreme assertion but evidence indicates limitations.`
-        };
-      }
-    }
+    console.log(`[LLMVerdict-Groq] Result: ${parsed.status} (${parsed.confidence}%) - ${parsed.reason.slice(0, 100)}...`);
+    return parsed;
+  } catch (groqErr: any) {
+    console.log(`[LLMVerdict] Groq failed: ${groqErr.message?.slice(0, 100)}, trying OpenRouter...`);
   }
-  
-  // ========== STEP 3: CHECK FOR STRONG SUPPORT ==========
-  
-  // Count keyword matches
-  let matchCount = 0;
-  const matchedWords: string[] = [];
-  for (const word of claimWords) {
-    if (allEvidence.includes(word)) {
-      matchCount++;
-      matchedWords.push(word);
-    }
-  }
-  
-  const matchRatio = claimWords.length > 0 ? matchCount / claimWords.length : 0;
-  
-  // Check for year matches (important for historical claims)
-  const claimYears: string[] = claim.match(/\b(1[89]\d\d|20[0-2]\d)\b/g) || [];
-  const evidenceYears: string[] = allEvidence.match(/\b(1[89]\d\d|20[0-2]\d)\b/g) || [];
-  const yearMatches = claimYears.filter((y: string) => evidenceYears.includes(y)).length;
-  const yearMatchRatio = claimYears.length > 0 ? yearMatches / claimYears.length : 1;
-  
-  // Check for entity matches (names, places)
-  const claimEntities: string[] = claim.match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*/g) || [];
-  const entityMatches = claimEntities.filter((entity: string) => 
-    allEvidence.includes(entity.toLowerCase())
-  ).length;
-  const entityMatchRatio = claimEntities.length > 0 ? entityMatches / claimEntities.length : 0;
-  
-  // Combined support score
-  const supportScore = (matchRatio * 0.4) + (yearMatchRatio * 0.3) + (entityMatchRatio * 0.3);
-  
-  console.log(`[FallbackVerdict] Support analysis: words=${matchRatio.toFixed(2)}, years=${yearMatchRatio.toFixed(2)}, entities=${entityMatchRatio.toFixed(2)}, combined=${supportScore.toFixed(2)}`);
-  
-  // ========== STEP 4: DETERMINE FINAL VERDICT ==========
-  
-  if (supportScore >= 0.7) {
-    // Strong support - VERIFIED
-    return {
-      status: "verified",
-      confidence: Math.round(60 + supportScore * 30),
-      reason: `Strong evidence support: ${matchCount}/${claimWords.length} keywords, ${yearMatches}/${claimYears.length} years, ${entityMatches}/${claimEntities.length} entities match.`
-    };
-  } else if (supportScore >= 0.5) {
-    // Moderate support - VERIFIED with lower confidence
-    return {
-      status: "verified",
-      confidence: Math.round(55 + supportScore * 20),
-      reason: `Evidence supports claim: ${matchCount} keyword matches, entities and dates align with sources.`
-    };
-  } else if (supportScore >= 0.3) {
-    // Weak support - UNCERTAIN
+
+  // Try OpenRouter as third fallback
+  try {
+    const response = await openrouter.chat.completions.create({
+      model: "meta-llama/llama-3.3-70b-instruct",
+      temperature: 0.3,
+      max_tokens: 1000,
+      messages: [{ role: "user", content: prompt }]
+    });
+    const rawOutput = response.choices[0]?.message?.content || "{}";
+    console.log(`[LLMVerdict-OpenRouter] Raw response: ${rawOutput.slice(0, 200)}...`);
+    
+    const output = rawOutput.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(output);
+    
+    console.log(`[LLMVerdict-OpenRouter] Result: ${parsed.status} (${parsed.confidence}%) - ${parsed.reason.slice(0, 100)}...`);
+    return parsed;
+  } catch (openrouterErr: any) {
+    console.log(`[LLMVerdict] OpenRouter also failed: ${openrouterErr.message?.slice(0, 100)}`);
+    
+    // No hardcoded fallback - just return uncertain when AI is unavailable
+    console.log(`[LLMVerdict] All AI unavailable - returning UNCERTAIN (no hardcoded logic)`);
     return {
       status: "partially_verified",
-      confidence: Math.round(40 + supportScore * 20),
-      reason: `Partial evidence found but not conclusive. ${matchCount}/${claimWords.length} keywords match.`
-    };
-  } else {
-    // Very weak support - UNCERTAIN
-    return {
-      status: "partially_verified",
-      confidence: 40,
-      reason: `Limited evidence overlap. Cannot verify without additional sources.`
+      confidence: 50,
+      reason: "AI verification unavailable. Cannot determine claim accuracy without LLM analysis."
     };
   }
 }
@@ -693,7 +514,7 @@ export const verifyClaim = async (claim: string): Promise<VerificationResult> =>
  */
 export const extractClaims = async (text: string): Promise<string[]> => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     
     const prompt = `You are a claim extraction engine. Extract ALL distinct factual claims from this text that can be verified.
 
