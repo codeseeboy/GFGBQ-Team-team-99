@@ -1,0 +1,5 @@
+export enum ClaimStatus {
+  VERIFIED = 'VERIFIED',
+  PARTIAL = 'PARTIAL',
+  HALLUCINATED = 'HALLUCINATED'
+}
