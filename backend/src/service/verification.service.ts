@@ -73,6 +73,27 @@ const analyze = async (text: string, userId?: string) => {
     verifiedText
   });
 
+  // Build dynamic summary based on claim distribution
+  const breakdown = (scoreResult as any).breakdown || {
+    verified: verifiedClaims.filter(c => c.status === "verified").length,
+    uncertain: verifiedClaims.filter(c => c.status === "uncertain").length,
+    hallucinated: verifiedClaims.filter(c => c.status === "hallucinated").length,
+    total: verifiedClaims.length
+  };
+
+  let summary = (scoreResult as any).summary || `${verifiedClaims.length} claims analyzed`;
+  
+  // Override with more specific message if hallucinations detected
+  if (breakdown.hallucinated > 0) {
+    summary = `⚠️ ${breakdown.hallucinated} hallucination${breakdown.hallucinated > 1 ? 's' : ''} detected. ${breakdown.verified} verified, ${breakdown.uncertain} uncertain out of ${breakdown.total} claims.`;
+  } else if (breakdown.verified === breakdown.total) {
+    summary = `✓ All ${breakdown.total} claims verified against trusted sources.`;
+  } else if (breakdown.verified > 0) {
+    summary = `${breakdown.verified} of ${breakdown.total} claims verified. ${breakdown.uncertain} claims need additional review.`;
+  } else {
+    summary = `${breakdown.total} claims analyzed. ${breakdown.uncertain} need additional verification.`;
+  }
+
   // Return format matching frontend expectations
   return {
     analysisId: saved._id,
@@ -81,7 +102,8 @@ const analyze = async (text: string, userId?: string) => {
     claims: verifiedClaims,
     sources,
     verifiedText,
-    summary: `${verifiedClaims.length} claims analyzed`
+    summary,
+    breakdown
   };
 };
 
