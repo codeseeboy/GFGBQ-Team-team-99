@@ -1,7 +1,8 @@
 import { Request, Response } from "express";
 import { verificationService } from "../service/verification.service";
+import { AuthRequest } from "../middleware/auth.middleware";
 
-export const analyzeText = async (req: Request, res: Response) => {
+export const analyzeText = async (req: AuthRequest, res: Response) => {
   try {
     const { text } = req.body;
 
@@ -9,7 +10,8 @@ export const analyzeText = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Text too short to verify (min 20 chars)" });
     }
 
-    const result = await verificationService.analyze(text);
+    // Pass userId if authenticated
+    const result = await verificationService.analyze(text, req.userId);
     res.json(result);
   } catch (err) {
     console.error(err);
