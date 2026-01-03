@@ -29,25 +29,28 @@ Advanced AI-powered claim verification engine with multi-LLM fallback, evidence 
 - Node.js 18+ and npm/pnpm
 - MongoDB Atlas cluster (free tier available)
 - API Keys:
-  - Google Gemini: https://makersuite.google.com/app/apikey
-  - Groq: https://console.groq.com/keys
-  - OpenRouter: https://openrouter.ai/keys
-  - SerpAPI: https://serpapi.com (web search)
+  - Google Gemini: <https://makersuite.google.com/app/apikey>
+  - Groq: <https://console.groq.com/keys>
+  - OpenRouter: <https://openrouter.ai/keys>
+  - SerpAPI: <https://serpapi.com> (web search)
 
 ## 🛠️ Installation
 
 1. **Clone and install**:
+
    ```bash
    cd backend
    npm install
    ```
 
 2. **Configure environment**:
+
    ```bash
    cp .env.example .env
    ```
-   
+
    Edit `.env` with your actual credentials:
+
    ```env
    PORT=4000
    MONGO_URI=mongodb+srv://user:password@cluster.mongodb.net/?appName=YourApp
@@ -58,11 +61,13 @@ Advanced AI-powered claim verification engine with multi-LLM fallback, evidence 
    ```
 
 3. **Start development server**:
+
    ```bash
    npm run dev
    ```
-   
+
    Expected output:
+
    ```
    ✓ Database connected
    ✓ Server running on http://localhost:4000
@@ -72,9 +77,11 @@ Advanced AI-powered claim verification engine with multi-LLM fallback, evidence 
 ## 📡 API Endpoints
 
 ### POST `/api/verification/analyze`
+
 Analyze text and extract claims with verification.
 
 **Request**:
+
 ```bash
 curl -X POST http://localhost:4000/api/verification/analyze \
   -H "Content-Type: application/json" \
@@ -84,6 +91,7 @@ curl -X POST http://localhost:4000/api/verification/analyze \
 ```
 
 **Response**:
+
 ```json
 {
   "analysisId": "abc123xyz",
@@ -103,9 +111,11 @@ curl -X POST http://localhost:4000/api/verification/analyze \
 ```
 
 ### GET `/api/verification/:analysisId/claims`
+
 Retrieve all extracted claims from an analysis.
 
 **Response**:
+
 ```json
 {
   "claims": [{ "id": "c1", "claim": "...", "status": "verified", ... }]
@@ -113,9 +123,11 @@ Retrieve all extracted claims from an analysis.
 ```
 
 ### GET `/api/verification/claim/:claimId/evidence`
+
 Get detailed evidence for a specific claim.
 
 **Response**:
+
 ```json
 {
   "evidence": [
@@ -129,9 +141,11 @@ Get detailed evidence for a specific claim.
 ```
 
 ### GET `/api/verification/:analysisId/verified-text`
+
 Get the corrected/verified version of the original text.
 
 ### GET `/api/logs/stream`
+
 Real-time SSE stream of verification logs.
 
 ```bash
@@ -140,6 +154,7 @@ curl http://localhost:4000/api/logs/stream
 ```
 
 ### GET `/api/health`
+
 Health check endpoint.
 
 ## 🏗️ Project Structure
@@ -166,23 +181,27 @@ src/
 ## 🔧 Build & Deploy
 
 ### Local Development
+
 ```bash
 npm run dev    # Watch mode with ts-node-dev
 ```
 
 ### Production Build
+
 ```bash
 npm run build  # Compile TypeScript to dist/
 npm start      # Run compiled server.js
 ```
 
 ### Docker Deployment
+
 ```bash
 docker build -t trustlayer-backend .
 docker run -p 4000:4000 --env-file .env trustlayer-backend
 ```
 
 ### Deploy to Railway
+
 ```bash
 npm install -g @railway/cli
 railway login
@@ -192,22 +211,26 @@ railway up
 ## 📊 Verification Logic
 
 ### Claim Extraction
+
 1. **Entity Recognition**: Identifies key entities (people, places, dates)
 2. **Intent Analysis**: Determines claim context and scope
 3. **Search Query Generation**: Creates optimized search queries
 
 ### Evidence Gathering
+
 1. **Wikipedia Lookup**: Direct article fetch + semantic search
 2. **Web Search**: SerpAPI for current news and sources
 3. **Result Normalization**: Standardizes evidence format
 
 ### Verdict Generation
+
 1. **Confidence Scoring**: LLM evaluates evidence match
 2. **Threshold Validation**: 85% minimum for "Verified"
 3. **Hallucination Detection**: Flags unsupported claims
 4. **Post-Processing**: Applies strict verdict rules
 
 ### Confidence Levels
+
 - **Verified** (90-100%): Strong evidence confirms claim
 - **Uncertain** (50-89%): Mixed or limited evidence
 - **Hallucinated** (<50%): Little/no evidence or contradicted
@@ -250,6 +273,7 @@ SERP_API_KEY         SerpAPI key for web search
 ## 📄 License
 
 Private - ByteQuest 2025 Hackathon
+
 - `src/controller/verification.controller.ts` – Request handlers
 - `src/service/`
   - `claim.service.ts` – Gemini AI claim extraction
@@ -259,6 +283,7 @@ Private - ByteQuest 2025 Hackathon
 - `src/model/VerificationResult.ts` – MongoDB schema
 
 ## API Flow
+
 ```
 POST /api/verification/analyze
  → Gemini extracts claims
@@ -278,6 +303,7 @@ GET /api/verification/:id/verified-text
 ```
 
 ## Notes
+
 - Gemini API key required (get from ai.google.dev)
 - Wikipedia API is free (no key needed)
 - SerpAPI optional (for enhanced web search)
