@@ -5,16 +5,26 @@ import { Button } from "@/components/ui/button"
 import { Shield, Menu, X } from "lucide-react"
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
+import { useRouter } from "next/navigation"
 
 export function SiteHeader() {
   const [isOpen, setIsOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+  const router = useRouter()
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20)
     window.addEventListener("scroll", handleScroll)
     return () => window.removeEventListener("scroll", handleScroll)
   }, [])
+
+  const handleVerifyClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    const token = localStorage.getItem("token")
+    if (!token) {
+      e.preventDefault()
+      router.push("/auth")
+    }
+  }
 
   return (
     <header
@@ -53,7 +63,7 @@ export function SiteHeader() {
               <Link href="/auth">Sign In</Link>
             </Button>
             <Button className="glow-primary rounded-full px-8 h-11 font-bold" asChild>
-              <Link href="/dashboard">Verify Now</Link>
+              <Link href="/dashboard" onClick={handleVerifyClick}>Verify Now</Link>
             </Button>
           </div>
 
@@ -91,7 +101,10 @@ export function SiteHeader() {
                   <Link href="/auth" onClick={() => setIsOpen(false)}>Sign In</Link>
                 </Button>
                 <Button className="w-full glow-primary py-6 text-lg font-bold" asChild>
-                  <Link href="/dashboard" onClick={() => setIsOpen(false)}>Verify Now</Link>
+                  <Link href="/dashboard" onClick={(e) => {
+                    setIsOpen(false)
+                    handleVerifyClick(e)
+                  }}>Verify Now</Link>
                 </Button>
               </div>
             </div>
