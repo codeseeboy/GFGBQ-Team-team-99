@@ -4,8 +4,18 @@ import { Button } from "@/components/ui/button"
 import { ArrowRight, ShieldCheck, Zap, Search } from "lucide-react"
 import Link from "next/link"
 import { motion } from "framer-motion"
+import { useRouter } from "next/navigation"
 
 export function LandingHero() {
+  const router = useRouter()
+
+  const handleVerifyClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    const token = localStorage.getItem("token")
+    if (!token) {
+      e.preventDefault()
+      router.push("/auth")
+    }
+  }
   return (
     <section className="relative min-h-screen flex items-center pt-20 sm:pt-24 pb-12 sm:pb-20 px-4 sm:px-6 overflow-hidden">
       <div className="absolute inset-0 z-0">
@@ -39,7 +49,7 @@ export function LandingHero() {
                 className="h-14 sm:h-16 px-8 sm:px-10 text-base sm:text-lg font-bold glow-primary rounded-xl sm:rounded-2xl group transition-all hover:scale-105 w-full sm:w-auto"
                 asChild
               >
-                <Link href="/dashboard">
+                <Link href="/dashboard" onClick={handleVerifyClick}>
                   Start Verification{" "}
                   <ArrowRight className="ml-2 w-4 h-4 sm:w-5 sm:h-5 group-hover:translate-x-1 transition-transform" />
                 </Link>
