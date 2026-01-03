@@ -123,89 +123,162 @@ export default function ReportsPage() {
                   <p className="text-muted-foreground">Loading reports...</p>
                 </div>
               ) : filteredReports.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left min-w-[800px]">
-                    <thead className="border-b border-white/5 bg-white/5">
-                      <tr className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">
-                        <th className="px-4 md:px-8 py-4 md:py-6">ID / Report Title</th>
-                        <th className="px-4 md:px-8 py-4 md:py-6">Trust Score</th>
-                        <th className="px-4 md:px-8 py-4 md:py-6">Status</th>
-                        <th className="px-4 md:px-8 py-4 md:py-6">Time</th>
-                        <th className="px-4 md:px-8 py-4 md:py-6 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {filteredReports.map((report) => (
-                        <tr key={report.id} className="group hover:bg-white/[0.02] transition-colors">
-                          <td className="px-4 md:px-8 py-4 md:py-6">
-                            <div className="flex items-center gap-3 md:gap-4">
-                              <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-                                <FileText className="w-4 h-4 md:w-5 md:h-5 text-primary" />
-                              </div>
-                              <div>
-                                <p className="font-bold tracking-tight text-sm md:text-base">{report.title}</p>
-                                <p className="text-[10px] text-muted-foreground font-mono">{report.id.slice(0, 12)}...</p>
-                              </div>
+                <>
+                  {/* Mobile Card Layout */}
+                  <div className="md:hidden divide-y divide-white/5">
+                    {filteredReports.map((report) => (
+                      <div key={report.id} className="p-4 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                              <FileText className="w-5 h-5 text-primary" />
                             </div>
-                          </td>
-                          <td className="px-4 md:px-8 py-4 md:py-6">
-                            <div className="flex items-center gap-3">
-                              <div className="w-12 md:w-16 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                            <div className="min-w-0">
+                              <p className="font-bold tracking-tight text-sm truncate">{report.title}</p>
+                              <p className="text-[10px] text-muted-foreground font-mono">#{report.id.slice(0, 8)}</p>
+                            </div>
+                          </div>
+                          <span
+                            className={`text-[9px] font-black uppercase px-2 py-1 rounded-md whitespace-nowrap flex-shrink-0 ${
+                              report.status === "Verified"
+                                ? "bg-green-500/10 text-green-500 border border-green-500/20"
+                                : report.status === "Flagged"
+                                  ? "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"
+                                  : "bg-red-500/10 text-red-500 border border-red-500/20"
+                            }`}
+                          >
+                            {report.status}
+                          </span>
+                        </div>
+                        
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2">
+                              <div className="w-16 h-1.5 bg-white/5 rounded-full overflow-hidden">
                                 <div
                                   className="h-full bg-primary"
                                   style={{ width: `${report.score}%`, boxShadow: "0 0 10px var(--color-primary)" }}
                                 />
                               </div>
-                              <span className="text-xs md:text-sm font-bold font-mono">{report.score}%</span>
+                              <span className="text-xs font-bold font-mono">{report.score}%</span>
                             </div>
-                          </td>
-                          <td className="px-4 md:px-8 py-4 md:py-6">
-                            <span
-                              className={`text-[10px] font-black uppercase px-2 py-1 rounded-md whitespace-nowrap ${
-                                report.status === "Verified"
-                                  ? "bg-green-500/10 text-green-500 border border-green-500/20"
-                                  : report.status === "Flagged"
-                                    ? "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"
-                                    : "bg-red-500/10 text-red-500 border border-red-500/20"
-                              }`}
+                            <span className="text-[10px] text-muted-foreground">{report.timestamp}</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 w-8 p-0 rounded-lg hover:bg-red-500/10"
+                              onClick={() => handleDelete(report.id)}
+                              disabled={deleting === report.id}
                             >
-                              {report.status}
-                            </span>
-                          </td>
-                          <td className="px-4 md:px-8 py-4 md:py-6 text-xs md:text-sm text-muted-foreground font-medium">
-                            {report.timestamp}
-                          </td>
-                          <td className="px-4 md:px-8 py-4 md:py-6">
-                            <div className="flex items-center justify-end gap-2">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8 w-8 p-0 rounded-lg hover:bg-red-500/10"
-                                onClick={() => handleDelete(report.id)}
-                                disabled={deleting === report.id}
-                              >
-                                {deleting === report.id ? (
-                                  <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : (
-                                  <Trash2 className="w-4 h-4 text-muted-foreground hover:text-red-500" />
-                                )}
-                              </Button>
-                              <Button
-                                size="sm"
-                                className="h-8 px-3 md:px-4 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 group-hover:bg-primary group-hover:text-white transition-all text-[11px] font-bold"
-                                asChild
-                              >
-                                <Link href={`/dashboard?reportId=${report.id}`}>
-                                  VIEW <ChevronRight className="w-3 h-3 ml-1" />
-                                </Link>
-                              </Button>
-                            </div>
-                          </td>
+                              {deleting === report.id ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-4 h-4 text-muted-foreground" />
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              className="h-8 px-4 rounded-lg bg-primary text-white font-bold text-xs"
+                              asChild
+                            >
+                              <Link href={`/reports/${report.id}`}>
+                                View
+                              </Link>
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Desktop Table Layout */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead className="border-b border-white/5 bg-white/5">
+                        <tr className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">
+                          <th className="px-8 py-6">ID / Report Title</th>
+                          <th className="px-8 py-6">Trust Score</th>
+                          <th className="px-8 py-6">Status</th>
+                          <th className="px-8 py-6">Time</th>
+                          <th className="px-8 py-6 text-right">Actions</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {filteredReports.map((report) => (
+                          <tr key={report.id} className="group hover:bg-white/[0.02] transition-colors">
+                            <td className="px-8 py-6">
+                              <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                                  <FileText className="w-5 h-5 text-primary" />
+                                </div>
+                                <div>
+                                  <p className="font-bold tracking-tight">{report.title}</p>
+                                  <p className="text-[10px] text-muted-foreground font-mono">{report.id.slice(0, 12)}...</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-8 py-6">
+                              <div className="flex items-center gap-3">
+                                <div className="w-16 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-primary"
+                                    style={{ width: `${report.score}%`, boxShadow: "0 0 10px var(--color-primary)" }}
+                                  />
+                                </div>
+                                <span className="text-sm font-bold font-mono">{report.score}%</span>
+                              </div>
+                            </td>
+                            <td className="px-8 py-6">
+                              <span
+                                className={`text-[10px] font-black uppercase px-2 py-1 rounded-md whitespace-nowrap ${
+                                  report.status === "Verified"
+                                    ? "bg-green-500/10 text-green-500 border border-green-500/20"
+                                    : report.status === "Flagged"
+                                      ? "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"
+                                      : "bg-red-500/10 text-red-500 border border-red-500/20"
+                                }`}
+                              >
+                                {report.status}
+                              </span>
+                            </td>
+                            <td className="px-8 py-6 text-sm text-muted-foreground font-medium">
+                              {report.timestamp}
+                            </td>
+                            <td className="px-8 py-6">
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-8 w-8 p-0 rounded-lg hover:bg-red-500/10"
+                                  onClick={() => handleDelete(report.id)}
+                                  disabled={deleting === report.id}
+                                >
+                                  {deleting === report.id ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-4 h-4 text-muted-foreground hover:text-red-500" />
+                                  )}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  className="h-8 px-4 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 group-hover:bg-primary group-hover:text-white transition-all text-[11px] font-bold"
+                                  asChild
+                                >
+                                  <Link href={`/reports/${report.id}`}>
+                                    VIEW <ChevronRight className="w-3 h-3 ml-1" />
+                                  </Link>
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               ) : (
                 <div className="p-12 md:p-20 text-center space-y-4">
                   <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mx-auto mb-6">

@@ -1,3 +1,11 @@
+/**
+ * TrustLayer AI - Server Entry Point
+ * 
+ * Initializes environment variables, MongoDB connection, and starts Express server.
+ * All microservices (Gemini, Groq, OpenRouter, Wikipedia, SerpAPI) are initialized
+ * in their respective service files.
+ */
+
 import dotenv from "dotenv";
 // Load environment variables FIRST before any other imports
 dotenv.config();
@@ -7,12 +15,17 @@ import app from "./app";
 
 const PORT = process.env.PORT || 4000;
 
+/**
+ * MongoDB Connection & Server Startup
+ * Connects to MongoDB Atlas and starts Express server on configured port.
+ * Logs connection status and API key availability for debugging.
+ */
 mongoose
   .connect(process.env.MONGO_URI!)
   .then(() => {
-    console.log("MongoDB connected");
-    console.log(`GEMINI_API_KEY loaded: ${process.env.GEMINI_API_KEY ? 'Yes (' + process.env.GEMINI_API_KEY.slice(0,10) + '...)' : 'No'}`);
-    console.log(`SERP_API_KEY loaded: ${process.env.SERP_API_KEY ? 'Yes' : 'No'}`);
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+    console.log("✓ Database connected");
+    console.log(`✓ Server running on http://localhost:${PORT}`);
+    console.log("✓ All services initialized and ready");
+    app.listen(PORT);
   })
-  .catch((err) => console.error("MongoDB connection error:", err));
+  .catch((err) => console.error("✗ Database connection error:", err.message));

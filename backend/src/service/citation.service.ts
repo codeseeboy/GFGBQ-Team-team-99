@@ -2,6 +2,7 @@ import axios from "axios";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
 import OpenAI from "openai";
+import { logger } from "./logger.service";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -104,8 +105,8 @@ JSON only, no markdown:`;
   // Try OpenRouter as third fallback
   try {
     const response = await openrouter.chat.completions.create({
-      model: "meta-llama/llama-3.3-70b-instruct",
-      temperature: 0.3,
+      model: "qwen/qwen-2.5-72b-instruct",
+      temperature: 0.1,
       max_tokens: 500,
       messages: [{ role: "user", content: prompt }]
     });
@@ -178,6 +179,7 @@ async function getWikipediaSummary(entity: string): Promise<{ extract: string; u
   const directUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiTitle)}`;
   
   console.log(`[Wikipedia] Fetching entity: "${cleanEntity}"`);
+  logger.wikipediaFetch(cleanEntity);
   
   try {
     const response = await axios.get(directUrl, { 
@@ -186,6 +188,7 @@ async function getWikipediaSummary(entity: string): Promise<{ extract: string; u
     });
     if (response.data?.extract) {
       console.log(`[Wikipedia] Found: ${response.data.title}`);
+      logger.wikipediaFound(response.data.title);
       return {
         extract: response.data.extract,
         url: response.data.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${wikiTitle}`,
@@ -244,6 +247,7 @@ async function searchWeb(query: string): Promise<Array<{ title: string; snippet:
   
   try {
     console.log(`[WebSearch] Searching: "${query.slice(0, 60)}..."`);
+    logger.searchQuery(query);
     const response = await axios.get("https://serpapi.com/search", {
       params: {
         q: query,
@@ -261,6 +265,7 @@ async function searchWeb(query: string): Promise<Array<{ title: string; snippet:
         url: r.link || ""
       }));
       console.log(`[WebSearch] Found ${results.length} results`);
+      logger.searchResults(results.length);
       return results;
     }
   } catch (err: any) {
@@ -275,8 +280,42 @@ async function searchWeb(query: string): Promise<Array<{ title: string; snippet:
 // ============================================================================
 
 /**
+ * ABSOLUTE CLAIM DETECTION
+ * Claims with absolute words require absolute proof - partial evidence = HALLUCINATED
+ */
+const ABSOLUTE_CLAIM_WORDS = [
+  'widely', 'all', 'every', 'always', 'never', 'only', 'fully', 'completely',
+  'entirely', 'officially', 'deployed', 'launched', 'released', 'implemented',
+  'established', 'created', 'founded', 'invented', 'discovered', 'proven',
+  'confirmed', 'guaranteed', 'certain', 'definitely', 'exclusively', 'universally'
+];
+
+function isAbsoluteClaim(claim: string): boolean {
+  const lowerClaim = claim.toLowerCase();
+  return ABSOLUTE_CLAIM_WORDS.some(word => lowerClaim.includes(word));
+}
+
+/**
+ * EVIDENCE NORMALIZATION
+ * Hedging language in evidence = uncertainty marker, not confirmation
+ */
+function normalizeEvidence(text: string): string {
+  return text
+    // Hedging verbs → explicit uncertainty
+    .replace(/\b(may|might|could|can potentially)\b/gi, '[UNCERTAIN]')
+    .replace(/\b(is exploring|is researching|is investigating|is considering)\b/gi, '[UNCERTAIN]')
+    .replace(/\b(plans to|intends to|aims to|hopes to)\b/gi, '[FUTURE_INTENT]')
+    // Non-production states → explicit markers
+    .replace(/\b(pilot|trial|experiment|prototype|beta|testing phase)\b/gi, '[NOT_PRODUCTION]')
+    .replace(/\b(proposed|potential|possible|expected)\b/gi, '[UNCERTAIN]');
+}
+
+/**
  * LLM-BASED VERDICT - The AI reasons from sources dynamically
- * Tries Gemini first, then Groq as fallback
+ * Tries Gemini first, then Groq, then OpenRouter as fallback
+ * 
+ * STRICT BINARY VERIFICATION: Only VERIFIED or HALLUCINATED
+ * No partial/uncertain - if not proven, it's hallucinated
  */
 async function getLLMVerdict(
   claim: string,
@@ -284,15 +323,22 @@ async function getLLMVerdict(
   searchSnippets: string[],
   claimAnalysis: ClaimAnalysis
 ): Promise<LLMVerdict> {
-  const wikiContext = wikipediaSummary 
-    ? `WIKIPEDIA EVIDENCE:\n"${wikipediaSummary.slice(0, 2500)}"`
+  // Normalize evidence to expose hedging language
+  const normalizedWiki = wikipediaSummary ? normalizeEvidence(wikipediaSummary) : null;
+  const normalizedSnippets = searchSnippets.map(s => normalizeEvidence(s));
+  
+  const wikiContext = normalizedWiki 
+    ? `WIKIPEDIA EVIDENCE:\n"${normalizedWiki.slice(0, 2500)}"`
     : "WIKIPEDIA: No relevant article found.";
   
-  const searchContext = searchSnippets.length > 0
-    ? `WEB SEARCH EVIDENCE:\n${searchSnippets.slice(0, 3).map((s, i) => `${i + 1}. ${s}`).join("\n\n")}`
+  const searchContext = normalizedSnippets.length > 0
+    ? `WEB SEARCH EVIDENCE:\n${normalizedSnippets.slice(0, 3).map((s, i) => `${i + 1}. ${s}`).join("\n\n")}`
     : "WEB SEARCH: No results available.";
 
-  const prompt = `You are a factual verification engine. Your job is to determine if a claim is TRUE, PARTIALLY TRUE, or FALSE based on the provided evidence.
+  // Check if this is an absolute claim (requires absolute proof)
+  const hasAbsoluteWords = isAbsoluteClaim(claim);
+
+  const prompt = `You are an EXTREMELY STRICT fact verification engine. Your job is to catch HALLUCINATIONS.
 
 CLAIM TO VERIFY:
 "${claim}"
@@ -300,46 +346,85 @@ CLAIM TO VERIFY:
 EXTRACTED INFO:
 - Entities: ${claimAnalysis.entities.join(", ")}
 - Claim Type: ${claimAnalysis.intent}
-- Key Attributes: ${claimAnalysis.attributes.join(", ") || "general"}
+${hasAbsoluteWords ? "- ⚠️ ABSOLUTE CLAIM: Requires EXPLICIT, DIRECT confirmation" : ""}
 
 ${wikiContext}
 
 ${searchContext}
 
-VERIFICATION TASK:
-Compare the CLAIM against the evidence. Determine ONE of:
+VERIFICATION RULES (STRICT - NO EXCEPTIONS):
 
-1. VERIFIED (confidence 70-100): The claim is factually CORRECT.
-   - The sources confirm the key facts in the claim
-   - Minor wording differences are OK if meaning is the same
-   - Use this when claim and evidence AGREE
+VERIFIED (confidence 85-100):
+✓ Evidence DIRECTLY states the claim fact
+✓ Names, dates, numbers, places EXACTLY match
+✓ No hedging language (no "may", "might", "could", "exploring")
+✓ Clear statement in Wikipedia or multiple news sources
+✓ Sources EXPLICITLY support the claim
 
-2. PARTIALLY_VERIFIED (confidence 40-69): The claim is MOSTLY correct but uncertain.
-   - Some facts are correct but some details cannot be confirmed
-   - Evidence is related but doesn't fully confirm or deny
-   - Use this when evidence is insufficient
+HALLUCINATED (confidence 85-100):
+✗ Evidence does NOT mention the claim at all
+✗ Evidence CONTRADICTS the claim
+✗ Evidence shows hedging: "may", "might", "could", "exploring", "researching", "plans to"
+✗ Evidence shows non-production: "pilot", "trial", "experiment", "testing"
+✗ Evidence is about something DIFFERENT (wrong date, wrong person, wrong location)
+✗ Claim uses absolute words ("deployed", "launched", "released") but evidence shows "planning" or "testing"
+✗ Only ONE source mentions it, most sources don't
+✗ No Wikipedia article exists for the claim topic
+✗ Web search results contradict the claim
 
-3. HALLUCINATED (confidence 70-100): The claim contains FALSE information.
-   - The sources CONTRADICT the claim
-   - Key facts are WRONG (wrong person, wrong date, wrong location, wrong reason)
-   - The claim states something the sources explicitly DENY
-   - Use this when claim and evidence DISAGREE
+DEFAULT: If evidence is WEAK or MISSING → HALLUCINATED
 
-CRITICAL REASONING RULES:
-- If claim says "X happened for reason A" but evidence says "X happened for reason B" → HALLUCINATED
-- If claim says "X is in location A" but evidence says "X is in location B" → HALLUCINATED  
-- If claim says "X cures/prevents Y" but evidence says "no evidence X affects Y" → HALLUCINATED
-- If evidence doesn't mention the claim topic at all → PARTIALLY_VERIFIED (not HALLUCINATED)
-- Only mark HALLUCINATED if there is CONTRADICTING evidence
-
-Return ONLY a JSON object:
+OUTPUT JSON:
 {
-  "status": "verified" | "partially_verified" | "hallucinated",
-  "confidence": 0-100,
-  "reason": "Brief explanation citing specific evidence that supports or contradicts"
+  "status": "verified" | "hallucinated",
+  "confidence": 85-100,
+  "reason": "Specific quote from evidence OR why evidence doesn't support claim"
 }
 
-JSON only, no markdown:`;
+JSON ONLY, NO MARKDOWN:`;
+
+  /**
+   * POST-PROCESS LLM VERDICT
+   * Enforce strict rules - if evidence is weak, mark as hallucinated
+   */
+  function enforceStrictVerdict(parsed: LLMVerdict, claim: string): LLMVerdict {
+    // Rule 1: Map partially_verified to hallucinated (binary only)
+    if (parsed.status === "partially_verified") {
+      console.log(`[LLMVerdict] Mapping partially_verified → hallucinated (strict mode)`);
+      return {
+        status: "hallucinated",
+        confidence: 85,
+        reason: parsed.reason + " [Partial verification = unverified]"
+      };
+    }
+    
+    // Rule 2: Low confidence verified → hallucinated
+    if (parsed.status === "verified" && parsed.confidence < 85) {
+      console.log(`[LLMVerdict] Low confidence verdict upgraded to hallucinated (${parsed.confidence}% < 85%)`);
+      return {
+        status: "hallucinated",
+        confidence: 85,
+        reason: parsed.reason + " [Below confidence threshold]"
+      };
+    }
+    
+    // Rule 3: Absolute claims require 90+ confidence
+    if (isAbsoluteClaim(claim) && parsed.status === "verified" && parsed.confidence < 90) {
+      console.log(`[LLMVerdict] Absolute claim with ${parsed.confidence}% < 90% → hallucinated`);
+      return {
+        status: "hallucinated",
+        confidence: 85,
+        reason: parsed.reason + " [Absolute claim requires 90%+ confidence]"
+      };
+    }
+    
+    // Rule 4: Ensure valid confidence range
+    if (parsed.confidence < 85 || parsed.confidence > 100) {
+      parsed.confidence = parsed.status === "verified" ? 85 : 85;
+    }
+    
+    return parsed;
+  }
 
   // Try Gemini first
   try {
@@ -349,59 +434,71 @@ JSON only, no markdown:`;
     console.log(`[LLMVerdict-Gemini] Raw response: ${rawOutput.slice(0, 200)}...`);
     
     const output = rawOutput.replace(/```json|```/g, "").trim();
+    if (!output || output.length < 20) {
+      throw new Error("Empty response from Gemini");
+    }
     const parsed = JSON.parse(output);
     
-    console.log(`[LLMVerdict-Gemini] Result: ${parsed.status} (${parsed.confidence}%) - ${parsed.reason.slice(0, 100)}...`);
-    return parsed;
+    const enforced = enforceStrictVerdict(parsed, claim);
+    console.log(`[LLMVerdict-Gemini] Result: ${enforced.status} (${enforced.confidence}%) - ${enforced.reason.slice(0, 100)}...`);
+    return enforced;
   } catch (geminiErr: any) {
     console.log(`[LLMVerdict] Gemini failed: ${geminiErr.message?.slice(0, 100)}, trying Groq...`);
   }
 
-  // Try Groq as fallback
+  // Try Groq as primary fallback (usually most reliable)
   try {
     const response = await groq.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
       model: "llama-3.3-70b-versatile",
-      temperature: 0.3,
+      temperature: 0.1,
       max_tokens: 1000
     });
     const rawOutput = response.choices[0]?.message?.content || "{}";
     console.log(`[LLMVerdict-Groq] Raw response: ${rawOutput.slice(0, 200)}...`);
     
+    if (!rawOutput || rawOutput.length < 20) {
+      throw new Error("Empty response from Groq");
+    }
     const output = rawOutput.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(output);
     
-    console.log(`[LLMVerdict-Groq] Result: ${parsed.status} (${parsed.confidence}%) - ${parsed.reason.slice(0, 100)}...`);
-    return parsed;
+    const enforced = enforceStrictVerdict(parsed, claim);
+    console.log(`[LLMVerdict-Groq] Result: ${enforced.status} (${enforced.confidence}%) - ${enforced.reason.slice(0, 100)}...`);
+    return enforced;
   } catch (groqErr: any) {
     console.log(`[LLMVerdict] Groq failed: ${groqErr.message?.slice(0, 100)}, trying OpenRouter...`);
   }
 
-  // Try OpenRouter as third fallback
+  // Try OpenRouter as second fallback
   try {
     const response = await openrouter.chat.completions.create({
-      model: "meta-llama/llama-3.3-70b-instruct",
-      temperature: 0.3,
+      model: "meta-llama/llama-3-70b-instruct",
+      temperature: 0.1,
       max_tokens: 1000,
       messages: [{ role: "user", content: prompt }]
     });
     const rawOutput = response.choices[0]?.message?.content || "{}";
     console.log(`[LLMVerdict-OpenRouter] Raw response: ${rawOutput.slice(0, 200)}...`);
     
+    if (!rawOutput || rawOutput.length < 20) {
+      throw new Error("Empty response from OpenRouter");
+    }
     const output = rawOutput.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(output);
     
-    console.log(`[LLMVerdict-OpenRouter] Result: ${parsed.status} (${parsed.confidence}%) - ${parsed.reason.slice(0, 100)}...`);
-    return parsed;
+    const enforced = enforceStrictVerdict(parsed, claim);
+    console.log(`[LLMVerdict-OpenRouter] Result: ${enforced.status} (${enforced.confidence}%) - ${enforced.reason.slice(0, 100)}...`);
+    return enforced;
   } catch (openrouterErr: any) {
     console.log(`[LLMVerdict] OpenRouter also failed: ${openrouterErr.message?.slice(0, 100)}`);
     
-    // No hardcoded fallback - just return uncertain when AI is unavailable
-    console.log(`[LLMVerdict] All AI unavailable - returning UNCERTAIN (no hardcoded logic)`);
+    // STRICT FALLBACK: If no AI available, claim cannot be verified = hallucinated
+    console.log(`[LLMVerdict] ALL AI providers failed - returning HALLUCINATED (cannot verify)`);
     return {
-      status: "partially_verified",
-      confidence: 50,
-      reason: "AI verification unavailable. Cannot determine claim accuracy without LLM analysis."
+      status: "hallucinated",
+      confidence: 85,
+      reason: "AI verification unavailable. Claim cannot be verified without AI reasoning."
     };
   }
 }
@@ -428,8 +525,10 @@ export const verifyClaim = async (claim: string): Promise<VerificationResult> =>
   console.log(`${"=".repeat(60)}`);
   
   // STEP 1: Extract entities and intent using LLM
+  logger.analyzing(claim);
   const claimAnalysis = await extractClaimAnalysis(claim);
   console.log(`[Verify] Analysis: entities=${claimAnalysis.entities.join(", ")}, intent=${claimAnalysis.intent}`);
+  logger.entitiesFound(claimAnalysis.entities);
   
   // STEP 2: Gather Wikipedia evidence for each entity
   let combinedWikiSummary = "";
@@ -493,6 +592,7 @@ export const verifyClaim = async (claim: string): Promise<VerificationResult> =>
   
   console.log(`[Verify] FINAL: ${finalStatus.toUpperCase()} (${finalConfidence}%)`);
   console.log(`${"=".repeat(60)}\n`);
+  logger.verdict(finalStatus, finalConfidence);
   
   return {
     status: finalStatus,

@@ -1,3 +1,5 @@
+import { logger } from "./logger.service";
+
 export const calculateTrustScore = (claims: any[]) => {
   if (claims.length === 0) {
     return {
@@ -58,6 +60,7 @@ export const calculateTrustScore = (claims: any[]) => {
   }
 
   console.log(`[TrustScore] V=${verified}, U=${uncertain}, H=${hallucinated} → Score=${Math.round(finalScore)}, Label="${label}"`);
+  logger.trustScore(Math.round(finalScore), label);
 
   return {
     score: Math.round(finalScore),

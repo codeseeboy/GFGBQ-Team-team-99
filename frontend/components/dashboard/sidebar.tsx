@@ -1,6 +1,6 @@
 "use client"
 
-import { Shield, LayoutDashboard, History, Settings, Info, Zap, Menu, X, LogOut, User } from "lucide-react"
+import { Shield, LayoutDashboard, History, Info, Zap, Menu, X, LogOut, User } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useState, useEffect } from "react"
@@ -76,7 +76,6 @@ export function Sidebar() {
         <nav className="flex flex-col gap-6 md:gap-10 flex-1 w-full px-4 md:px-0">
           <NavItem href="/dashboard" icon={LayoutDashboard} label="Verify" active={pathname === "/dashboard"} />
           <NavItem href="/reports" icon={History} label="Reports" active={pathname === "/reports"} activeLabel />
-          <NavItem href="/settings" icon={Settings} label="System" active={pathname === "/settings"} activeLabel />
           <NavItem href="/about" icon={Info} label="About" active={pathname === "/about"} activeLabel />
         </nav>
 

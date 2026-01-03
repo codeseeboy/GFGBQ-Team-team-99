@@ -1,19 +1,47 @@
+/**
+ * TrustLayer AI - Frontend API Client
+ * 
+ * Handles all communication with the backend verification engine.
+ * Manages authentication tokens, API calls, and type-safe responses.
+ * 
+ * Base URL: http://localhost:4000/api (or NEXT_PUBLIC_API_URL env var)
+ */
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
 
-// Token management
+/**
+ * Token Management - localStorage utilities
+ * Manages JWT tokens for authenticated requests
+ */
+
+/**
+ * Retrieves auth token from localStorage
+ * @returns {string | null} JWT token or null if not found
+ */
 const getToken = (): string | null => {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("token");
 };
 
+/**
+ * Stores auth token in localStorage
+ * @param {string} token - JWT token to store
+ */
 const setToken = (token: string): void => {
   localStorage.setItem("token", token);
 };
 
+/**
+ * Removes auth token from localStorage (logout)
+ */
 const removeToken = (): void => {
   localStorage.removeItem("token");
 };
 
+/**
+ * Generates HTTP headers with Authorization bearer token if available
+ * @returns {HeadersInit} Headers object with Content-Type and optional Authorization
+ */
 const getAuthHeaders = (): HeadersInit => {
   const token = getToken();
   const headers: HeadersInit = {
@@ -25,19 +53,38 @@ const getAuthHeaders = (): HeadersInit => {
   return headers;
 };
 
-// Types
+/**
+ * Type Definitions
+ * Core interfaces for authentication, analysis, and reports
+ */
+
+/**
+ * User account information
+ */
 export interface User {
   id: string;
   name: string;
   email: string;
 }
 
+/**
+ * Authentication response with user and token
+ */
 export interface AuthResponse {
   message: string;
   user: User;
   token: string;
 }
 
+/**
+ * Verified/analyzed claim with status and supporting evidence
+ * @property {string} id - Unique claim identifier
+ * @property {string} claim - The actual claim text extracted from input
+ * @property {string} status - Verification result: verified, uncertain, or hallucinated
+ * @property {number} confidence - Confidence score (0-100)
+ * @property {string} explanation - Detailed reason for the verdict
+ * @property {Array} evidence - Wikipedia/web search results supporting the verdict
+ */
 export interface Claim {
   id: string;
   claim: string;
@@ -51,6 +98,13 @@ export interface Claim {
   }>;
 }
 
+/**
+ * Evidence source (Wikipedia article or web search result)
+ * @property {string} title - Source title/heading
+ * @property {string} url - Direct link to source
+ * @property {boolean} verified - Whether source supports the claim
+ * @property {boolean} suspicious - Whether source contradicts the claim
+ */
 export interface Source {
   title: string;
   url: string;
@@ -58,6 +112,16 @@ export interface Source {
   suspicious?: boolean;
 }
 
+/**
+ * Complete verification analysis result
+ * @property {string} analysisId - Unique verification session ID
+ * @property {number} score - Overall trust score (0-100)
+ * @property {string} label - Summary label (e.g., "High Confidence", "Review Required")
+ * @property {Array<Claim>} claims - All extracted and verified claims
+ * @property {Array<Source>} sources - All evidence sources used
+ * @property {string} verifiedText - Annotated version with verification marks
+ * @property {string} summary - Executive summary of findings
+ */
 export interface AnalysisResult {
   analysisId: string;
   score: number;

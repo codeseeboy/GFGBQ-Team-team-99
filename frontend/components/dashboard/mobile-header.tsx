@@ -43,11 +43,15 @@ export function MobileHeader() {
 
       {/* Mobile Menu Overlay */}
       {isOpen && (
-        <div
-          className="lg:hidden fixed inset-0 bg-black/80 backdrop-blur-xl z-40 animate-fade-in"
-          onClick={() => setIsOpen(false)}
-        >
-          <nav className="absolute top-20 left-4 right-4 glass rounded-3xl border border-white/10 p-6 space-y-2 animate-slide-in-from-top">
+        <>
+          <div
+            className="lg:hidden fixed inset-0 bg-black/80 backdrop-blur-xl z-40 animate-fade-in"
+            onClick={() => setIsOpen(false)}
+          />
+          <nav 
+            className="lg:hidden fixed top-20 left-4 right-4 glass rounded-3xl border border-white/10 p-6 space-y-2 z-50 animate-slide-in-from-top"
+            onClick={(e) => e.stopPropagation()}
+          >
             {navItems.map((item) => (
               <Link
                 key={item.href}
@@ -63,7 +67,7 @@ export function MobileHeader() {
               </Link>
             ))}
           </nav>
-        </div>
+        </>
       )}
     </>
   )

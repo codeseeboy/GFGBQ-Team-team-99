@@ -52,7 +52,9 @@ export function SiteHeader() {
             <Button variant="ghost" className="text-white/60 hover:text-white hover:bg-white/5 transition-all" asChild>
               <Link href="/auth">Sign In</Link>
             </Button>
-            <Button className="glow-primary rounded-full px-8 h-11 font-bold">Verify Now</Button>
+            <Button className="glow-primary rounded-full px-8 h-11 font-bold" asChild>
+              <Link href="/dashboard">Verify Now</Link>
+            </Button>
           </div>
 
           <button
@@ -85,10 +87,12 @@ export function SiteHeader() {
               ))}
               <hr className="border-white/5" />
               <div className="flex flex-col gap-4">
-                <Button variant="outline" className="w-full glass py-6 text-lg font-bold bg-transparent">
-                  Sign In
+                <Button variant="outline" className="w-full glass py-6 text-lg font-bold bg-transparent" asChild>
+                  <Link href="/auth" onClick={() => setIsOpen(false)}>Sign In</Link>
                 </Button>
-                <Button className="w-full glow-primary py-6 text-lg font-bold">Verify Now</Button>
+                <Button className="w-full glow-primary py-6 text-lg font-bold" asChild>
+                  <Link href="/dashboard" onClick={() => setIsOpen(false)}>Verify Now</Link>
+                </Button>
               </div>
             </div>
           </motion.div>
