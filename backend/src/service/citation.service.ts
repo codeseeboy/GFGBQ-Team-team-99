@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
 import OpenAI from "openai";
 import { logger } from "./logger.service";
+import { rateLimiter } from "./rate-limiter.service";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -74,43 +75,55 @@ IMPORTANT:
 
 JSON only, no markdown:`;
 
-  // Try Gemini first
+  // Try Gemini first with rate limiting and retries
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const result = await model.generateContent(prompt);
-    const output = result.response.text().replace(/```json|```/g, "").trim();
+    const result = await rateLimiter.executeWithRetry("gemini", async () => {
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const response = await model.generateContent(prompt);
+      return response.response.text();
+    });
+    
+    const output = result.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(output);
     console.log(`[EntityExtract-Gemini] Claim: "${claim.slice(0, 50)}..." → Entities: ${parsed.entities.join(", ")}`);
     return parsed;
   } catch (geminiErr) {
-    console.log(`[EntityExtract] Gemini failed, trying Groq...`);
+    console.log(`[EntityExtract] Gemini failed after retries, trying Groq...`);
   }
 
-  // Try Groq as fallback
+  // Try Groq as primary fallback
   try {
-    const response = await groq.chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: "llama-3.3-70b-versatile",
-      temperature: 0.3,
-      max_tokens: 500
+    const result = await rateLimiter.executeWithRetry("groq", async () => {
+      const response = await groq.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        model: "llama-3.3-70b-versatile",
+        temperature: 0.3,
+        max_tokens: 500
+      });
+      return response.choices[0]?.message?.content || "{}";
     });
-    const output = response.choices[0]?.message?.content?.replace(/```json|```/g, "").trim() || "{}";
+    
+    const output = result.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(output);
     console.log(`[EntityExtract-Groq] Claim: "${claim.slice(0, 50)}..." → Entities: ${parsed.entities.join(", ")}`);
     return parsed;
   } catch (groqErr) {
-    console.log(`[EntityExtract] Groq failed, trying OpenRouter...`);
+    console.log(`[EntityExtract] Groq failed after retries, trying OpenRouter...`);
   }
 
   // Try OpenRouter as third fallback
   try {
-    const response = await openrouter.chat.completions.create({
-      model: "qwen/qwen-2.5-72b-instruct",
-      temperature: 0.1,
-      max_tokens: 500,
-      messages: [{ role: "user", content: prompt }]
+    const result = await rateLimiter.executeWithRetry("openrouter", async () => {
+      const response = await openrouter.chat.completions.create({
+        model: "qwen/qwen-2.5-72b-instruct",
+        temperature: 0.1,
+        max_tokens: 500,
+        messages: [{ role: "user", content: prompt }]
+      });
+      return response.choices[0]?.message?.content || "{}";
     });
-    const output = response.choices[0]?.message?.content?.replace(/```json|```/g, "").trim() || "{}";
+    
+    const output = result.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(output);
     console.log(`[EntityExtract-OpenRouter] Claim: "${claim.slice(0, 50)}..." → Entities: ${parsed.entities.join(", ")}`);
     return parsed;
@@ -312,7 +325,8 @@ function normalizeEvidence(text: string): string {
 
 /**
  * LLM-BASED VERDICT - The AI reasons from sources dynamically
- * Tries Gemini first, then Groq, then OpenRouter as fallback
+ * Uses Groq as PRIMARY (most stable under load)
+ * Falls back to Gemini, then OpenRouter
  * 
  * STRICT BINARY VERIFICATION: Only VERIFIED or HALLUCINATED
  * No partial/uncertain - if not proven, it's hallucinated
@@ -327,12 +341,13 @@ async function getLLMVerdict(
   const normalizedWiki = wikipediaSummary ? normalizeEvidence(wikipediaSummary) : null;
   const normalizedSnippets = searchSnippets.map(s => normalizeEvidence(s));
   
+  // OPTIMIZED: Truncate evidence to avoid token bloat
   const wikiContext = normalizedWiki 
-    ? `WIKIPEDIA EVIDENCE:\n"${normalizedWiki.slice(0, 2500)}"`
+    ? `WIKIPEDIA EVIDENCE:\n"${normalizedWiki.slice(0, 1500)}"` // Reduced from 2500
     : "WIKIPEDIA: No relevant article found.";
   
   const searchContext = normalizedSnippets.length > 0
-    ? `WEB SEARCH EVIDENCE:\n${normalizedSnippets.slice(0, 3).map((s, i) => `${i + 1}. ${s}`).join("\n\n")}`
+    ? `WEB SEARCH EVIDENCE:\n${normalizedSnippets.slice(0, 2).map((s, i) => `${i + 1}. ${s.slice(0, 400)}`).join("\n\n")}` // Reduced from 3 snippets
     : "WEB SEARCH: No results available.";
 
   // Check if this is an absolute claim (requires absolute proof)
@@ -426,36 +441,20 @@ JSON ONLY, NO MARKDOWN:`;
     return parsed;
   }
 
-  // Try Gemini first
+  // TRY GROQ FIRST (MOST STABLE UNDER LOAD)
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const result = await model.generateContent(prompt);
-    const rawOutput = result.response.text();
-    console.log(`[LLMVerdict-Gemini] Raw response: ${rawOutput.slice(0, 200)}...`);
-    
-    const output = rawOutput.replace(/```json|```/g, "").trim();
-    if (!output || output.length < 20) {
-      throw new Error("Empty response from Gemini");
-    }
-    const parsed = JSON.parse(output);
-    
-    const enforced = enforceStrictVerdict(parsed, claim);
-    console.log(`[LLMVerdict-Gemini] Result: ${enforced.status} (${enforced.confidence}%) - ${enforced.reason.slice(0, 100)}...`);
-    return enforced;
-  } catch (geminiErr: any) {
-    console.log(`[LLMVerdict] Gemini failed: ${geminiErr.message?.slice(0, 100)}, trying Groq...`);
-  }
-
-  // Try Groq as primary fallback (usually most reliable)
-  try {
-    const response = await groq.chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: "llama-3.3-70b-versatile",
-      temperature: 0.1,
-      max_tokens: 1000
+    const result = await rateLimiter.executeWithRetry("groq", async () => {
+      const response = await groq.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        model: "llama-3.3-70b-versatile",
+        temperature: 0.1,
+        max_tokens: 800 // Reduced from 1000
+      });
+      return response.choices[0]?.message?.content || "{}";
     });
-    const rawOutput = response.choices[0]?.message?.content || "{}";
-    console.log(`[LLMVerdict-Groq] Raw response: ${rawOutput.slice(0, 200)}...`);
+    
+    const rawOutput = result;
+    console.log(`[LLMVerdict-Groq] Raw response: ${rawOutput.slice(0, 150)}...`);
     
     if (!rawOutput || rawOutput.length < 20) {
       throw new Error("Empty response from Groq");
@@ -464,22 +463,50 @@ JSON ONLY, NO MARKDOWN:`;
     const parsed = JSON.parse(output);
     
     const enforced = enforceStrictVerdict(parsed, claim);
-    console.log(`[LLMVerdict-Groq] Result: ${enforced.status} (${enforced.confidence}%) - ${enforced.reason.slice(0, 100)}...`);
+    console.log(`[LLMVerdict-Groq] Result: ${enforced.status} (${enforced.confidence}%) - ${enforced.reason.slice(0, 80)}...`);
     return enforced;
   } catch (groqErr: any) {
-    console.log(`[LLMVerdict] Groq failed: ${groqErr.message?.slice(0, 100)}, trying OpenRouter...`);
+    console.log(`[LLMVerdict] Groq failed: ${groqErr.message?.slice(0, 80)}, trying Gemini...`);
   }
 
-  // Try OpenRouter as second fallback
+  // TRY GEMINI AS FALLBACK
   try {
-    const response = await openrouter.chat.completions.create({
-      model: "meta-llama/llama-3-70b-instruct",
-      temperature: 0.1,
-      max_tokens: 1000,
-      messages: [{ role: "user", content: prompt }]
+    const result = await rateLimiter.executeWithRetry("gemini", async () => {
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const response = await model.generateContent(prompt);
+      return response.response.text();
     });
-    const rawOutput = response.choices[0]?.message?.content || "{}";
-    console.log(`[LLMVerdict-OpenRouter] Raw response: ${rawOutput.slice(0, 200)}...`);
+    
+    const rawOutput = result;
+    console.log(`[LLMVerdict-Gemini] Raw response: ${rawOutput.slice(0, 150)}...`);
+    
+    if (!rawOutput || rawOutput.length < 20) {
+      throw new Error("Empty response from Gemini");
+    }
+    const output = rawOutput.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(output);
+    
+    const enforced = enforceStrictVerdict(parsed, claim);
+    console.log(`[LLMVerdict-Gemini] Result: ${enforced.status} (${enforced.confidence}%) - ${enforced.reason.slice(0, 80)}...`);
+    return enforced;
+  } catch (geminiErr: any) {
+    console.log(`[LLMVerdict] Gemini failed: ${geminiErr.message?.slice(0, 80)}, trying OpenRouter...`);
+  }
+
+  // TRY OPENROUTER AS SECOND FALLBACK
+  try {
+    const result = await rateLimiter.executeWithRetry("openrouter", async () => {
+      const response = await openrouter.chat.completions.create({
+        model: "meta-llama/llama-3-70b-instruct",
+        temperature: 0.1,
+        max_tokens: 800,
+        messages: [{ role: "user", content: prompt }]
+      });
+      return response.choices[0]?.message?.content || "{}";
+    });
+    
+    const rawOutput = result;
+    console.log(`[LLMVerdict-OpenRouter] Raw response: ${rawOutput.slice(0, 150)}...`);
     
     if (!rawOutput || rawOutput.length < 20) {
       throw new Error("Empty response from OpenRouter");
@@ -488,13 +515,14 @@ JSON ONLY, NO MARKDOWN:`;
     const parsed = JSON.parse(output);
     
     const enforced = enforceStrictVerdict(parsed, claim);
-    console.log(`[LLMVerdict-OpenRouter] Result: ${enforced.status} (${enforced.confidence}%) - ${enforced.reason.slice(0, 100)}...`);
+    console.log(`[LLMVerdict-OpenRouter] Result: ${enforced.status} (${enforced.confidence}%) - ${enforced.reason.slice(0, 80)}...`);
     return enforced;
   } catch (openrouterErr: any) {
-    console.log(`[LLMVerdict] OpenRouter also failed: ${openrouterErr.message?.slice(0, 100)}`);
+    console.log(`[LLMVerdict] OpenRouter also failed: ${openrouterErr.message?.slice(0, 80)}`);
     
     // STRICT FALLBACK: If no AI available, claim cannot be verified = hallucinated
     console.log(`[LLMVerdict] ALL AI providers failed - returning HALLUCINATED (cannot verify)`);
+    logger.providerFailure("all", "All LLM providers exhausted");
     return {
       status: "hallucinated",
       confidence: 85,
@@ -614,8 +642,6 @@ export const verifyClaim = async (claim: string): Promise<VerificationResult> =>
  */
 export const extractClaims = async (text: string): Promise<string[]> => {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    
     const prompt = `You are a claim extraction engine. Extract ALL distinct factual claims from this text that can be verified.
 
 TEXT:
@@ -635,8 +661,13 @@ If no verifiable claims found, return: []
 
 JSON only, no markdown:`;
 
-    const result = await model.generateContent(prompt);
-    const output = result.response.text().replace(/```json|```/g, "").trim();
+    const result = await rateLimiter.executeWithRetry("gemini", async () => {
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const response = await model.generateContent(prompt);
+      return response.response.text();
+    });
+    
+    const output = result.replace(/```json|```/g, "").trim();
     const claims = JSON.parse(output);
     
     console.log(`[ExtractClaims] Found ${claims.length} claims in text`);

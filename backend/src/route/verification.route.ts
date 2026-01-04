@@ -3,7 +3,8 @@ import {
   analyzeText,
   getClaims,
   getClaimEvidence,
-  getVerifiedText
+  getVerifiedText,
+  getProviderMetrics
 } from "../controller/verification.controller";
 import { optionalAuth } from "../middleware/auth.middleware";
 
@@ -15,5 +16,6 @@ router.post("/analyze", optionalAuth, analyzeText);
 router.get("/:id/claims", getClaims);
 router.get("/claim/:claimId/evidence", getClaimEvidence);
 router.get("/:id/verified-text", getVerifiedText);
+router.get("/metrics/providers", getProviderMetrics);
 
 export default router;

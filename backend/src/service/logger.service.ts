@@ -86,6 +86,14 @@ export const logger = {
     emitLog("score", `Trust Score: ${score}% - ${label}`, "success");
   },
 
+  providerFailure: (provider: string, error: string) => {
+    emitLog("info", `[${provider.toUpperCase()}] Failed: ${error}`, "error");
+  },
+
+  providerSuccess: (provider: string, model: string) => {
+    emitLog("info", `[${provider.toUpperCase()}] Success with ${model}`, "success");
+  },
+
   info: (message: string) => {
     emitLog("info", message, "success");
   }

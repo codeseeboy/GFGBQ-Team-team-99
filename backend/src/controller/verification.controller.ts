@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { verificationService } from "../service/verification.service";
 import { AuthRequest } from "../middleware/auth.middleware";
+import { rateLimiter } from "../service/rate-limiter.service";
 
 export const analyzeText = async (req: AuthRequest, res: Response) => {
   try {
@@ -43,5 +44,19 @@ export const getVerifiedText = async (req: Request, res: Response) => {
     res.json(result);
   } catch (err) {
     res.status(404).json({ message: "Analysis not found" });
+  }
+};
+
+export const getProviderMetrics = async (req: Request, res: Response) => {
+  try {
+    const metrics = rateLimiter.getMetrics();
+    rateLimiter.logStats();
+    res.json({
+      providers: metrics,
+      bestProvider: rateLimiter.getBestProvider(),
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to retrieve metrics" });
   }
 };
